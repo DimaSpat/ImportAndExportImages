@@ -1,0 +1,32 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(5, 100px); /* 3 columns */
+  grid-auto-rows: 100px;
+}
+
+.blur-load {
+  position: relative;
+}
+
+.low-res {
+  filter: blur(3px); /* Blurry thumbnail */
+  transition: opacity 0.5s ease-in-out;
+}
+
+.high-res {
+  transition: opacity 2s ease-in-out;
+  opacity: 0;
+}
+
+img {
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 100%;
+  min-height: 100%;
+  object-position: center;
+  object-fit: cover;
+}
+
+img.high-res {
+  opacity: 1;
+}

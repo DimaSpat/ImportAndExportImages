@@ -1,96 +1,100 @@
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-const multer = require("multer");
-const sharp = require("sharp");
-const mongoose = require("mongoose");
-const Image = require("../models/image.model"); // Import the Image model
+const multer = require('multer');
+const sharp = require('sharp');
+const Image = require('../models/image.model');
 
-// Multer storage configuration (store files in memory for processing)
+// Configure multer storage
 const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
+const upload = multer({ storage });
 
-// POST route to handle image upload, conversion, and thumbnail creation
-router.post("/", upload.single("image"), async (req, res) => {
+// Helper function to convert image to WebP and save to MongoDB
+const convertToWebPAndSave = async (file) => {
+  const webpBuffer = await sharp(file.buffer)
+    .webp({ quality: 80 })
+    .toBuffer();
+
+  const imageDoc = new Image({
+    fullResData: webpBuffer,
+    contentType: 'image/webp',
+    filename: file.originalname,
+  });
+
+  await imageDoc.save();
+  return imageDoc;
+};
+
+// Helper function to create a 64x64 thumbnail and save to MongoDB
+const createThumbnail = async (file) => {
+  const thumbnailBuffer = await sharp(file.buffer)
+    .resize(64, 64)
+    .webp({ quality: 50 })
+    .toBuffer();
+
+  return thumbnailBuffer; // Return thumbnail buffer to be saved later
+};
+
+// Route for handling multiple image uploads
+router.post('/', upload.array('images'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ message: "No file uploaded" });
+    const files = req.files;
+    const savedImages = [];
+
+    for (let file of files) {
+      const thumbnail = await createThumbnail(file);
+      const webpImage = await convertToWebPAndSave(file);
+
+      // Update the saved image with the thumbnail
+      webpImage.thumbnailData = thumbnail;
+      await webpImage.save(); // Save the updated document with thumbnail data
+      savedImages.push(webpImage);
     }
 
-    // Convert the image to WebP format (full resolution)
-    const webpBuffer = await sharp(req.file.buffer).webp().toBuffer();
-
-    // Create a 64x64 thumbnail
-    const thumbnailBuffer = await sharp(req.file.buffer)
-      .resize(16, 16) // Resize to 64x64 pixels
-      .webp() // Convert to WebP
-      .toBuffer();
-
-    // Save the full resolution and thumbnail image in the database
-    const newImage = new Image({
-      fullResData: webpBuffer, // Full resolution WebP image
-      thumbnailData: thumbnailBuffer, // 64x64 WebP thumbnail
-      contentType: "image/webp", // MIME type for both images
-      filename: req.file.originalname, // Optional: original filename
-    });
-
-    await newImage.save();
-
-    res.status(200).json({ message: "Image uploaded and saved successfully", imageId: newImage._id });
+    res.status(200).json({ message: "Images uploaded successfully", images: savedImages });
   } catch (error) {
-    console.error("Error uploading image:", error);
-    res.status(500).json({ message: "Internal server error" });
+    console.error('Error uploading images:', error);
+    res.status(500).json({ error: 'Error uploading images' });
   }
 });
 
-// GET route to retrieve a 64x64 thumbnail image by ID
-router.get("/thumbnail/:id", async (req, res) => {
+// Route to get all images (only metadata)
+router.get('/', async (req, res) => {
   try {
-    const image = await Image.findById(req.params.id);
-
-    if (!image) {
-      return res.status(404).json({ message: "Thumbnail not found" });
-    }
-
-    res.set("Content-Type", image.contentType);
-    res.send(image.thumbnailData);
-  } catch (error) {
-    console.error("Error fetching thumbnail:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-// GET route to retrieve a full-resolution image by ID
-router.get("/:id", async (req, res) => {
-  const { id } = req.params;
-
-  // Check if the ID is a valid MongoDB ObjectId
-  if (!mongoose.Types.ObjectId.isValid(id)) {
-    return res.status(400).json({ message: "Invalid image ID" });
-  }
-
-  try {
-    const image = await Image.findById(id);
-
-    if (!image) {
-      return res.status(404).json({ message: "Image not found" });
-    }
-
-    res.set("Content-Type", image.contentType);
-    res.send(image.fullResData); // Send the full-resolution image
-  } catch (error) {
-    console.error("Error fetching image:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
-});
-
-// GET route to retrieve all images (metadata only, not the actual image data)
-router.get("/", async (req, res) => {
-  try {
-    const images = await Image.find({}, '_id filename'); // Only return _id and filename for now
+    const images = await Image.find();
     res.status(200).json(images);
   } catch (error) {
-    console.error("Error fetching images:", error);
-    res.status(500).json({ message: "Internal server error" });
+    console.error('Error fetching images:', error);
+    res.status(500).json({ error: 'Error fetching images' });
+  }
+});
+
+// Route to serve thumbnail image
+router.get('/thumbnail/:id', async (req, res) => {
+  try {
+    const image = await Image.findById(req.params.id);
+    if (!image || !image.thumbnailData) {
+      return res.status(404).json({ error: 'Thumbnail not found' });
+    }
+    res.set('Content-Type', image.contentType);
+    res.send(image.thumbnailData);
+  } catch (error) {
+    console.error('Error fetching thumbnail:', error);
+    res.status(500).json({ error: 'Error fetching thumbnail' });
+  }
+});
+
+// Route to serve full-resolution image
+router.get('/full/:id', async (req, res) => {
+  try {
+    const image = await Image.findById(req.params.id);
+    if (!image || !image.fullResData) {
+      return res.status(404).json({ error: 'Full-resolution image not found' });
+    }
+    res.set('Content-Type', image.contentType);
+    res.send(image.fullResData);
+  } catch (error) {
+    console.error('Error fetching full-resolution image:', error);
+    res.status(500).json({ error: 'Error fetching full-resolution image' });
   }
 });
 
